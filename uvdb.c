@@ -6,6 +6,7 @@
 #include <netinet/tcp.h>
 #include <psp2/net/net_syscalls.h>
 #include <psp2/kernel/threadmgr/msgpipe.h>
+#include <psp2/kernel/clib.h>
 #include <kubridge.h>
 #include "uvdb.h"
 
@@ -46,7 +47,7 @@ struct buffer
 
 static void buffer_popleft(struct buffer* buf, size_t cnt)
 {
-    memmove(buf->buf, buf->buf+cnt, buf->size-cnt);
+    sceClibMemmove(buf->buf, buf->buf+cnt, buf->size-cnt);
     buf->size -= cnt;
 }
 
@@ -65,7 +66,7 @@ static size_t buffer_getspace(struct buffer* buf, char** pos)
         }
         void* base;
         sceKernelGetMemBlockBase(memblock2, &base);
-        memcpy(base, buf->buf, buf->size);
+        sceClibMemcpy(base, buf->buf, buf->size);
         sceKernelFreeMemBlock(buf->memblock_uid);
         buf->memblock_uid = memblock2;
         buf->buf = base;
@@ -94,7 +95,7 @@ static void buffer_write(struct buffer* buf, const char* data, size_t sz)
         size_t chk = buffer_getspace(buf, &pos);
         if(chk > sz)
             chk = sz;
-        memcpy(pos, data, chk);
+        sceClibMemcpy(pos, data, chk);
         data += chk;
         buf->size += chk;
         sz -= chk;
@@ -198,8 +199,8 @@ static void send_packet(void)
 }
 
 #undef POLL
-#define IS(s) sz == sizeof(s) - 1 && !memcmp(pkt, s, sizeof(s) - 1)
-#define STARTSWITH(s) sz >= sizeof(s) - 1 && !memcmp(pkt, s, sizeof(s) - 1)
+#define IS(s) sz == sizeof(s) - 1 && !sceClibMemcmp(pkt, s, sizeof(s) - 1)
+#define STARTSWITH(s) sz >= sizeof(s) - 1 && !sceClibMemcmp(pkt, s, sizeof(s) - 1)
 #define STRING(s) s, sizeof(s) - 1
 
 struct stream
@@ -299,7 +300,7 @@ static void read_hex(char** p, char* start, size_t sz)
 
 static void skip_hex(char** p, size_t cnt)
 {
-    *p += strnlen(*p, 2*cnt);
+    *p += sceClibStrnlen(*p, 2*cnt);
 }
 
 static void write_x(size_t sz)
@@ -419,7 +420,7 @@ static void uvdb_main_loop(KuKernelExceptionContext* ctx, int stop_signal)
             _sceKernelExitProcessForUser(1);
         else if(IS("c"))
         {
-            memcpy(pkt, "?#3f", 4); //next invocation of uvdb_main_loop will parse it and respond with the status
+            sceClibMemcpy(pkt, "?#3f", 4); //next invocation of uvdb_main_loop will parse it and respond with the status
             out_buf.size--; //undo buffer_start_packet
             buffer_flush(&out_buf); //see the comment in recv_packet
             return; //no cleanup, this is intentional
