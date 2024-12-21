@@ -25,17 +25,30 @@ int main(void)
     psvDebugScreenPrintf("Run the following command on your PC:\n");
     psvDebugScreenPrintf("$ gdb test.elf -ex 'target remote %hhu.%hhu.%hhu.%hhu:1234'\n", addr[0], addr[1], addr[2], addr[3]);
     uvdb_enter();
+    uvdb_redirect_stdio();
     //let's do something fun and run fizzbuzz
     for(int i = 1;; i++)
     {
         if(i % 6 == 0)
+        {
+            printf("FizzBuzz\n");
             psvDebugScreenPrintf("FizzBuzz\n");
+        }
         else if(i % 2 == 0)
+        {
+            printf("Fizz\n");
             psvDebugScreenPrintf("Fizz\n");
+        }
         else if(i % 3 == 0)
+        {
+            printf("Buzz\n");
             psvDebugScreenPrintf("Buzz\n");
+        }
         else
+        {
+            printf("%d\n", i);
             psvDebugScreenPrintf("%d\n", i);
+        }
     }
     usleep(3000000);
     return 0;

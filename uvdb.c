@@ -2,6 +2,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/signal.h> //for signal constants; these seem to match gdb's
+#include <stdarg.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <psp2/net/net_syscalls.h>
@@ -14,6 +15,7 @@ void _sceKernelExitProcessForUser(int);
 int _sceKernelSendMsgPipeVector(SceUID, const SceKernelAddrPair*, unsigned int, uint32_t* rest);
 int _sceKernelReceiveMsgPipeVector(SceUID, const SceKernelAddrPair*, unsigned int, uint32_t* rest);
 extern char __executable_start[];
+extern char __init_array_start[];
 
 static int uvdb_lock_state;
 
@@ -424,12 +426,27 @@ static void uvdb_main_loop(KuKernelExceptionContext* ctx, int stop_signal)
             buffer_flush(&out_buf); //see the comment in recv_packet
             return; //no cleanup, this is intentional
         }
+        else if(STARTSWITH("F"))
+        {
+            char* p = pkt + 1;
+            ctx->r0 = parse_hex(&p);
+            //see above for explanation what this does
+            memcpy(pkt, "?#3f", 4);
+            for(size_t i = 1; i < sz; i++)
+                pkt[i+3] = 0;
+            out_buf.size--;
+            buffer_flush(&out_buf);
+            return;
+        }
         else if(IS("qOffsets"))
         {
-            uint8_t packet[16] = "TextSeg=";
+            uint8_t packet[33] = "TextSeg=........;DataSeg=........";
             uint32_t value = (uint32_t)__executable_start;
             for(int i = 0; i < 8; i++)
                 packet[15-i] = int2hex((value >> (4*i)) & 15);
+            value = (uint32_t)__init_array_start;
+            for(int i = 0; i < 8; i++)
+                packet[32-i] = int2hex((value >> (4*i)) & 15);
             buffer_write(&out_buf, packet, sizeof(packet));
         }
         discard_packet(pkt, sz);
@@ -448,8 +465,6 @@ static __attribute__((naked)) void uvdb_trap_pc(void)
 
 static void exception_handler(KuKernelExceptionContext* ctx)
 {
-    static int counter = 0;
-    int q = counter++;
     int signal = SIGSEGV;
     if(ctx->exceptionType == KU_KERNEL_EXCEPTION_TYPE_UNDEFINED_INSTRUCTION)
         signal = SIGILL;
@@ -473,6 +488,41 @@ static void exception_handler(KuKernelExceptionContext* ctx)
     uvdb_lock();
     uvdb_main_loop(ctx, signal);
     uvdb_unlock();
+}
+
+int uvdb_remote_syscall(const char* name, int nargs, ...)
+{
+    KuKernelExceptionContext ctx = {};
+    uvdb_lock();
+    if(uvdb_socket < 0)
+    {
+        //someone attempted to do a remote syscall before the first uvdb_enter
+        //do a uvdb_enter now to avoid confusing the code
+        uvdb_unlock();
+        uvdb_enter();
+        uvdb_lock();
+    }
+    char* pkt;
+    size_t sz = recv_packet(&pkt);
+    discard_packet(pkt, sz);
+    buffer_start_packet(&out_buf);
+    buffer_write(&out_buf, "F", 1);
+    buffer_write(&out_buf, name, strlen(name));
+    va_list va;
+    va_start(va, nargs);
+    for(int i = 0; i < nargs; i++)
+    {
+        uintptr_t value = va_arg(va, uintptr_t);
+        char packet[9] = ",";
+        for(int i = 0; i < 8; i++)
+            packet[8-i] = int2hex((value >> (4*i)) & 15);
+        buffer_write(&out_buf, packet, 9);
+    }
+    va_end(va);
+    send_packet();
+    uvdb_main_loop(&ctx, 0);
+    uvdb_unlock();
+    return ctx.r0;
 }
 
 static __attribute__((used)) uint64_t real_uvdb_enter(uintptr_t lr)
